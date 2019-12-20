@@ -288,7 +288,7 @@ func (t *AugmentedTask) ExporterInformation() []*PrometheusTaskInfo {
 			host = ip
 		}
 
-		m = make(map[string]string)
+		m := make(map[string]string)
 		for k, v := range d.DockerLabels {
 			if strings.HasPrefix(k, *prometheusCustomLabelPrefix) {
 				key, val, err := GetCustomLabel(v)

@@ -163,25 +163,27 @@ type PrometheusTaskInfo struct {
 
 func GetCustomLabel(v string) (string, string, error) {
 
-	custom_label := strings.Split(v, ":")
-	if len(custom_label) != 2 {
+	customLabel := strings.Split(v, ":")
+	if len(customLabel) != 2 {
 		return "", "", errors.New("Incorrect custom label format")
 	}
 
-	return custom_label[0], custom_label[1], nil
+	return customLabel[0], customLabel[1], nil
 }
 
-func (t *AugmentedTask) ExporterInformation() []*PrometheusTaskInfo {
+func (t *AugmentedTask) ExporterInformation() ([]*PrometheusTaskInfo, *string) {
 	ret := []*PrometheusTaskInfo{}
+	configFile := outFile
+
 	var host string
 	var ip string
 
 	if t.LaunchType != ecs.LaunchTypeFargate {
 		if t.EC2Instance == nil {
-			return ret
+			return ret, configFile
 		}
 		if len(t.EC2Instance.NetworkInterfaces) == 0 {
-			return ret
+			return ret, configFile
 		}
 
 		for _, iface := range t.EC2Instance.NetworkInterfaces {
@@ -193,7 +195,7 @@ func (t *AugmentedTask) ExporterInformation() []*PrometheusTaskInfo {
 			}
 		}
 		if ip == "" {
-			return ret
+			return ret, configFile
 		}
 
 	}
@@ -302,6 +304,11 @@ func (t *AugmentedTask) ExporterInformation() []*PrometheusTaskInfo {
 					logError(err_custom_label)
 				}
 			}
+
+			if k == "PROMETHEUS_SHARD_IDENTIFIER" {
+				filename := v + ".yml"
+				configFile = &filename
+			}
 		}
 
 		labels := labels{
@@ -327,7 +334,8 @@ func (t *AugmentedTask) ExporterInformation() []*PrometheusTaskInfo {
 			Labels:  labels,
 		})
 	}
-	return ret
+
+	return ret, configFile
 }
 
 // AddTaskDefinitionsOfTasks adds to each Task the TaskDefinition
@@ -394,7 +402,7 @@ func StringToStarString(s []string) []*string {
 	return c
 }
 
-// SplitArray splits given array into chunks, it's usefull
+// SplitArray splits given array into chunks, it's useful
 // because AWS API has limits on number of elements you can
 // submit via one call.
 func SplitArray(a []string, size int) [][]string {
@@ -684,22 +692,34 @@ func main() {
 			logError(err)
 			return
 		}
-		infos := []*PrometheusTaskInfo{}
+
+		// Get mapping of output filename and content
+		filenameInfosMapping := map[*string][]*PrometheusTaskInfo{}
 		for _, t := range tasks {
-			info := t.ExporterInformation()
-			infos = append(infos, info...)
+			info, configFile := t.ExporterInformation()
+
+			if _, ok := filenameInfosMapping[configFile]; !ok {
+				filenameInfosMapping[configFile] = []*PrometheusTaskInfo{}
+			}
+
+			filenameInfosMapping[configFile] = append(filenameInfosMapping[configFile], info...)
 		}
-		m, err := yaml.Marshal(infos)
-		if err != nil {
-			logError(err)
-			return
+
+		// Write content in the respective files
+		for configFile, content := range filenameInfosMapping {
+			m, err := yaml.Marshal(content)
+			if err != nil {
+				logError(err)
+				return
+			}
+			log.Printf("Writing %d discovered exporters to %s", len(content), *configFile)
+			err = ioutil.WriteFile(*configFile, m, 0644)
+			if err != nil {
+				logError(err)
+				return
+			}
 		}
-		log.Printf("Writing %d discovered exporters to %s", len(infos), *outFile)
-		err = ioutil.WriteFile(*outFile, m, 0644)
-		if err != nil {
-			logError(err)
-			return
-		}
+
 	}
 	s := time.NewTimer(1 * time.Millisecond)
 	t := time.NewTicker(*interval)

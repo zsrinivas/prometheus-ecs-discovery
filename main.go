@@ -51,7 +51,8 @@ type labels struct {
 const dynamicPortLabel = "PROMETHEUS_DYNAMIC_EXPORT"
 
 var cluster = flag.String("config.cluster", "", "name of the cluster to scrape")
-var outFile = flag.String("config.write-to", "ecs_file_sd.yml", "path of file to write ECS service discovery information to")
+var outDir = flag.String("config.write-to-dir", "/prometheus", "path of dir to write config file to")
+var outFile = flag.String("config.write-to", "ecs_file_sd.yml", "name of file to write ECS service discovery information to")
 var interval = flag.Duration("config.scrape-interval", 60*time.Second, "interval at which to scrape the AWS API for ECS service discovery information")
 var times = flag.Int("config.scrape-times", 0, "how many times to scrape before exiting (0 = infinite)")
 var roleArn = flag.String("config.role-arn", "", "ARN of the role to assume when scraping the AWS API (optional)")
@@ -130,8 +131,9 @@ type PrometheusContainer struct {
 // PrometheusTaskInfo is the final structure that will be
 // output as a Prometheus file service discovery config.
 type PrometheusTaskInfo struct {
-	Targets []string `yaml:"targets"`
-	Labels  labels   `yaml:"labels"`
+	Targets    []string `yaml:"targets"`
+	Labels     labels   `yaml:"labels"`
+	ConfigFile *string
 }
 
 // ExporterInformation returns a list of []*PrometheusTaskInfo
@@ -165,25 +167,24 @@ func GetCustomLabel(v string) (string, string, error) {
 
 	customLabel := strings.Split(v, ":")
 	if len(customLabel) != 2 {
-		return "", "", errors.New("Incorrect custom label format")
+		return "", "", errors.New("incorrect custom label format")
 	}
 
 	return customLabel[0], customLabel[1], nil
 }
 
-func (t *AugmentedTask) ExporterInformation() ([]*PrometheusTaskInfo, *string) {
+func (t *AugmentedTask) ExporterInformation() []*PrometheusTaskInfo {
 	ret := []*PrometheusTaskInfo{}
-	configFile := outFile
 
 	var host string
 	var ip string
 
 	if t.LaunchType != ecs.LaunchTypeFargate {
 		if t.EC2Instance == nil {
-			return ret, configFile
+			return ret
 		}
 		if len(t.EC2Instance.NetworkInterfaces) == 0 {
-			return ret, configFile
+			return ret
 		}
 
 		for _, iface := range t.EC2Instance.NetworkInterfaces {
@@ -195,9 +196,8 @@ func (t *AugmentedTask) ExporterInformation() ([]*PrometheusTaskInfo, *string) {
 			}
 		}
 		if ip == "" {
-			return ret, configFile
+			return ret
 		}
-
 	}
 
 	var filter []string
@@ -293,6 +293,7 @@ func (t *AugmentedTask) ExporterInformation() ([]*PrometheusTaskInfo, *string) {
 			host = ip
 		}
 
+		configFile := outFile
 		m := make(map[string]string)
 		for k, v := range d.DockerLabels {
 			if strings.HasPrefix(k, *prometheusCustomLabelPrefix) {
@@ -300,8 +301,8 @@ func (t *AugmentedTask) ExporterInformation() ([]*PrometheusTaskInfo, *string) {
 				if err == nil {
 					m[key] = val
 				} else {
-					err_custom_label := errors.New("Skipping label " + k + " in task " + *t.TaskDefinition.Family + " of cluster " + *t.ClusterArn + " : " + err.Error())
-					logError(err_custom_label)
+					errCustomLabel := errors.New("Skipping label " + k + " in task " + *t.TaskDefinition.Family + " of cluster " + *t.ClusterArn + " : " + err.Error())
+					logError(errCustomLabel)
 				}
 			}
 
@@ -330,12 +331,13 @@ func (t *AugmentedTask) ExporterInformation() ([]*PrometheusTaskInfo, *string) {
 		}
 
 		ret = append(ret, &PrometheusTaskInfo{
-			Targets: []string{fmt.Sprintf("%s:%d", host, hostPort)},
-			Labels:  labels,
+			Targets:    []string{fmt.Sprintf("%s:%d", host, hostPort)},
+			Labels:     labels,
+			ConfigFile: configFile,
 		})
 	}
 
-	return ret, configFile
+	return ret
 }
 
 // AddTaskDefinitionsOfTasks adds to each Task the TaskDefinition
@@ -684,7 +686,6 @@ func main() {
 				return
 			}
 			clusters = c
-
 		}
 
 		tasks, err := GetAugmentedTasks(svc, svcec2, StringToStarString(clusters.ClusterArns))
@@ -696,13 +697,15 @@ func main() {
 		// Get mapping of output filename and content
 		filenameInfosMapping := map[*string][]*PrometheusTaskInfo{}
 		for _, t := range tasks {
-			info, configFile := t.ExporterInformation()
+			infoList := t.ExporterInformation()
 
-			if _, ok := filenameInfosMapping[configFile]; !ok {
-				filenameInfosMapping[configFile] = []*PrometheusTaskInfo{}
+			for _, info := range infoList {
+				if _, ok := filenameInfosMapping[info.ConfigFile]; !ok {
+					filenameInfosMapping[info.ConfigFile] = []*PrometheusTaskInfo{}
+				}
+
+				filenameInfosMapping[info.ConfigFile] = append(filenameInfosMapping[info.ConfigFile], info)
 			}
-
-			filenameInfosMapping[configFile] = append(filenameInfosMapping[configFile], info...)
 		}
 
 		// Write content in the respective files
@@ -713,7 +716,7 @@ func main() {
 				return
 			}
 			log.Printf("Writing %d discovered exporters to %s", len(content), *configFile)
-			err = ioutil.WriteFile(*configFile, m, 0644)
+			err = ioutil.WriteFile(strings.TrimRight(*outDir, "/")+"/"+strings.TrimLeft(*configFile, "/"), m, 0644)
 			if err != nil {
 				logError(err)
 				return

@@ -7,4 +7,6 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/prometheus-ecs-discovery .
 FROM alpine:latest
 RUN apk --no-cache add ca-certificates
 COPY --from=0 /bin/prometheus-ecs-discovery /bin/
-ENTRYPOINT ["prometheus-ecs-discovery"]
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod 777 /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]

@@ -695,16 +695,17 @@ func main() {
 		}
 
 		// Get mapping of output filename and content
-		filenameInfosMapping := map[*string][]*PrometheusTaskInfo{}
+		filenameInfosMapping := map[string][]*PrometheusTaskInfo{}
+
 		for _, t := range tasks {
 			infoList := t.ExporterInformation()
 
 			for _, info := range infoList {
-				if _, ok := filenameInfosMapping[info.ConfigFile]; !ok {
-					filenameInfosMapping[info.ConfigFile] = []*PrometheusTaskInfo{}
+				if _, ok := filenameInfosMapping[*info.ConfigFile]; !ok {
+					filenameInfosMapping[*info.ConfigFile] = []*PrometheusTaskInfo{}
 				}
 
-				filenameInfosMapping[info.ConfigFile] = append(filenameInfosMapping[info.ConfigFile], info)
+				filenameInfosMapping[*info.ConfigFile] = append(filenameInfosMapping[*info.ConfigFile], info)
 			}
 		}
 
@@ -715,8 +716,8 @@ func main() {
 				logError(err)
 				return
 			}
-			log.Printf("Writing %d discovered exporters to %s", len(content), *configFile)
-			err = ioutil.WriteFile(strings.TrimRight(*outDir, "/")+"/"+strings.TrimLeft(*configFile, "/"), m, 0644)
+			log.Printf("Writing %d discovered exporters to %s", len(content), configFile)
+			err = ioutil.WriteFile(strings.TrimRight(*outDir, "/")+"/"+strings.TrimLeft(configFile, "/"), m, 0644)
 			if err != nil {
 				logError(err)
 				return

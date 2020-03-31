@@ -133,7 +133,7 @@ type PrometheusContainer struct {
 type PrometheusTaskInfo struct {
 	Targets    []string `yaml:"targets"`
 	Labels     labels   `yaml:"labels"`
-	ConfigFile *string
+	ConfigFile *string  `yaml:"-"`
 }
 
 // ExporterInformation returns a list of []*PrometheusTaskInfo
